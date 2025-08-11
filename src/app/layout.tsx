@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Header from "@/components/layout/Header";
+import MainLayout from "@/components/layout/MainLayout";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,7 +15,14 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Heavy Equipment Management System",
-  description: "Manage your heavy equipment fleet efficiently",
+  description: "Professional fleet management solution for construction, mining, and heavy industry operations",
+  keywords: "heavy equipment, fleet management, construction, mining, maintenance, tracking",
+  authors: [{ name: "HEM System" }],
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -28,10 +35,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50`}
       >
-        <Header />
-        <main className="min-h-screen">
-          {children}
-        </main>
+        <MainLayout>{children}</MainLayout>
       </body>
     </html>
   );
