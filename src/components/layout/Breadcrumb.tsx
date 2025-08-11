@@ -24,6 +24,10 @@ const routeMap: Record<string, string> = {
   'profile': 'User Profile',
   'login': 'Login',
   
+  // Admin routes - skip 'admin' segment for cleaner breadcrumbs
+  'admin/users': 'Users',
+  'admin/roles': 'Roles',
+  
   // Sub-routes for equipment
   'equipment/create': 'Add New Equipment',
   'equipment/import': 'Import Equipment',
@@ -118,6 +122,11 @@ export default function Breadcrumb() {
     currentPath += `/${segment}`
     const isLast = index === pathSegments.length - 1
     
+    // Skip "admin" segment for cleaner breadcrumbs
+    if (segment === 'admin') {
+      return
+    }
+    
     // Check if segment is an ID (starts with letter followed by dash and number, or just a UUID-like pattern)
     const isId = /^[a-zA-Z]+-\d+$/.test(segment) || /^[a-f\d-]{8,}$/.test(segment)
     
@@ -141,7 +150,7 @@ export default function Breadcrumb() {
   })
 
   return (
-    <nav className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3" aria-label="Breadcrumb">
+    <nav className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-2" aria-label="Breadcrumb">
       <ol className="flex items-center space-x-2 text-sm">
         {breadcrumbItems.map((item, index) => (
           <li key={item.href} className="flex items-center">

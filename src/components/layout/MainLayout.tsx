@@ -50,7 +50,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
         isMobile 
           ? 'ml-0' // No margin on mobile - sidebar overlays
           : isOpen 
-            ? 'ml-88' // Full sidebar width on desktop when open
+            ? 'ml-72' // Full sidebar width on desktop when open (w-72 = 18rem)
             : 'ml-20'  // Collapsed sidebar width on desktop
       }`}>
         {/* Header */}
@@ -61,7 +61,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
         
         {/* Page Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
-          <div className="mx-auto max-w-7xl">
+          <div className="w-full">
             {children}
           </div>
         </main>

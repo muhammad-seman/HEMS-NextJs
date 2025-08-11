@@ -1,10 +1,10 @@
 'use client'
 
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSidebarStore } from '@/store/sidebar-store'
-import { useRBACStore, initializeRBAC } from '@/store/rbac-store'
+import { initializeRBAC } from '@/store/rbac-store'
 import { useRoleBasedUI } from '@/hooks/usePermissions'
 import { Module } from '@/types/rbac'
 import { 
@@ -35,15 +35,14 @@ import {
 
 interface NavigationItem {
   name: string
-  href: string
+  href?: string
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   iconSolid: React.ComponentType<React.SVGProps<SVGSVGElement>>
-  description: string
   module: Module
   requiredPermission?: 'create' | 'read' | 'update' | 'delete' | 'manage'
-  badge?: string
   isAdmin?: boolean
   children?: NavigationItem[]
+  isGroup?: boolean
 }
 
 const navigation: NavigationItem[] = [
@@ -52,105 +51,130 @@ const navigation: NavigationItem[] = [
     href: '/', 
     icon: HomeIcon, 
     iconSolid: HomeIconSolid,
-    description: 'Overview & Analytics',
     module: 'dashboard',
     requiredPermission: 'read'
   },
-  { 
-    name: 'Equipment', 
-    href: '/equipment', 
-    icon: TruckIcon, 
+  // Fleet Management Category
+  {
+    name: 'FLEET MANAGEMENT',
+    icon: TruckIcon,
     iconSolid: TruckIconSolid,
-    description: 'Fleet Management',
+    module: 'equipment',
+    requiredPermission: 'read',
+    isGroup: true
+  },
+  {
+    name: 'Equipment',
+    href: '/equipment',
+    icon: TruckIcon,
+    iconSolid: TruckIconSolid,
     module: 'equipment',
     requiredPermission: 'read'
   },
-  { 
-    name: 'Maintenance', 
-    href: '/maintenance', 
-    icon: WrenchIcon, 
-    iconSolid: WrenchIconSolid,
-    description: 'Service & Repairs',
-    module: 'maintenance',
-    requiredPermission: 'read',
-    badge: '3' // Pending maintenance
-  },
-  { 
-    name: 'Operators', 
-    href: '/operators', 
-    icon: UserGroupIcon, 
+  {
+    name: 'Operators',
+    href: '/operators',
+    icon: UserGroupIcon,
     iconSolid: UserGroupIconSolid,
-    description: 'Staff Management',
     module: 'operators',
     requiredPermission: 'read'
   },
-  { 
-    name: 'Tracking', 
-    href: '/tracking', 
-    icon: MapPinIcon, 
+  {
+    name: 'Tracking',
+    href: '/tracking',
+    icon: MapPinIcon,
     iconSolid: MapPinIconSolid,
-    description: 'Live Location & Status',
     module: 'tracking',
     requiredPermission: 'read'
   },
-  { 
-    name: 'Inventory', 
-    href: '/inventory', 
-    icon: CubeIcon, 
-    iconSolid: CubeIconSolid,
-    description: 'Parts & Supplies',
-    module: 'inventory',
+  // Maintenance Category
+  {
+    name: 'MAINTENANCE',
+    icon: WrenchIcon,
+    iconSolid: WrenchIconSolid,
+    module: 'maintenance',
+    requiredPermission: 'read',
+    isGroup: true
+  },
+  {
+    name: 'Maintenance',
+    href: '/maintenance',
+    icon: WrenchIcon,
+    iconSolid: WrenchIconSolid,
+    module: 'maintenance',
     requiredPermission: 'read'
   },
-  { 
-    name: 'Inspections', 
-    href: '/inspections', 
-    icon: ClipboardDocumentListIcon, 
+  {
+    name: 'Inspections',
+    href: '/inspections',
+    icon: ClipboardDocumentListIcon,
     iconSolid: ClipboardDocumentListIconSolid,
-    description: 'Safety & Compliance',
     module: 'inspections',
     requiredPermission: 'read'
   },
-  { 
-    name: 'Reports', 
-    href: '/reports', 
-    icon: ChartBarIcon, 
-    iconSolid: ChartBarIconSolid,
-    description: 'Analytics & Insights',
-    module: 'reports',
+  // Operations Category
+  {
+    name: 'OPERATIONS',
+    icon: CubeIcon,
+    iconSolid: CubeIconSolid,
+    module: 'inventory',
+    requiredPermission: 'read',
+    isGroup: true
+  },
+  {
+    name: 'Inventory',
+    href: '/inventory',
+    icon: CubeIcon,
+    iconSolid: CubeIconSolid,
+    module: 'inventory',
     requiredPermission: 'read'
   },
+  {
+    name: 'Reports',
+    href: '/reports',
+    icon: ChartBarIcon,
+    iconSolid: ChartBarIconSolid,
+    module: 'reports',
+    requiredPermission: 'read'
+  }
 ]
 
 // Admin navigation items
 const adminNavigation: NavigationItem[] = [
   {
-    name: 'Role Management',
-    href: '/admin/roles',
-    icon: ShieldCheckIcon,
-    iconSolid: ShieldCheckIconSolid,
-    description: 'Manage user roles',
-    module: 'roles',
+    name: 'ADMINISTRATION',
+    icon: CogIcon,
+    iconSolid: CogIconSolid,
+    module: 'users',
     requiredPermission: 'read',
-    isAdmin: true
+    isAdmin: true,
+    isGroup: true
   },
   {
-    name: 'User Management',
+    name: 'Users',
     href: '/admin/users',
     icon: UserGroupIcon,
     iconSolid: UserGroupIconSolid,
-    description: 'Manage user accounts',
     module: 'users',
     requiredPermission: 'read',
     isAdmin: true
   },
+  {
+    name: 'Roles',
+    href: '/admin/roles',
+    icon: ShieldCheckIcon,
+    iconSolid: ShieldCheckIconSolid,
+    module: 'roles',
+    requiredPermission: 'read',
+    isAdmin: true
+  }
 ]
 
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const { isOpen, isMobile, toggle, setOpen } = useSidebarStore()
-  const { shouldShowMenuItem, highestRole } = useRoleBasedUI()
+  const { isOpen, isMobile, setOpen } = useSidebarStore()
+  const { shouldShowMenuItem, highestRole, userPermissions } = useRoleBasedUI()
 
   // Initialize RBAC on component mount
   useEffect(() => {
@@ -171,15 +195,21 @@ export default function Sidebar() {
     }
   }
 
-  // Filter navigation items based on permissions
-  const visibleNavigation = navigation.filter(item => 
-    shouldShowMenuItem(item.module, item.requiredPermission || 'read')
-  )
 
-  // Filter admin navigation based on permissions
-  const visibleAdminNavigation = adminNavigation.filter(item =>
-    shouldShowMenuItem(item.module, item.requiredPermission || 'read')
-  )
+  // Filter navigation items based on permissions - show all if permissions not loaded yet
+  const visibleNavigation = Object.keys(userPermissions).length === 0 
+    ? navigation  // Show all menus if permissions not loaded
+    : navigation.filter(item => 
+        shouldShowMenuItem(item.module, item.requiredPermission || 'read')
+      )
+
+  // Filter admin navigation based on permissions - show all if permissions not loaded yet
+  const visibleAdminNavigation = Object.keys(userPermissions).length === 0 
+    ? adminNavigation  // Show all admin menus if permissions not loaded
+    : adminNavigation.filter(item =>
+        shouldShowMenuItem(item.module, item.requiredPermission || 'read')
+      )
+
 
   return (
     <>
@@ -193,26 +223,25 @@ export default function Sidebar() {
       
       {/* Sidebar */}
       <div className={`
-        fixed top-0 left-0 h-screen bg-slate-800 text-white z-30 transform transition-all duration-300 ease-in-out flex flex-col
+        fixed top-0 left-0 h-screen bg-slate-700 text-white z-30 transform transition-all duration-300 ease-in-out flex flex-col
         ${isMobile 
           ? isOpen 
-            ? 'translate-x-0 w-88' 
-            : '-translate-x-full w-88'
+            ? 'translate-x-0 w-72' 
+            : '-translate-x-full w-72'
           : isOpen 
-            ? 'translate-x-0 w-88'
+            ? 'translate-x-0 w-72'
             : 'translate-x-0 w-20'
         }
       `}>
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+        {/* Header - Aligned with navbar height */}
+        <div className="flex items-center justify-between px-4 h-16 border-b border-slate-600">
           <div className={`flex items-center space-x-3 ${!isOpen && 'lg:justify-center'}`}>
-            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
-              <TruckIconSolid className="w-6 h-6 text-white" />
+            <div className="w-8 h-8 bg-equipment-600 rounded-lg flex items-center justify-center">
+              <TruckIconSolid className="w-5 h-5 text-white" />
             </div>
             {isOpen && (
               <div className="animate-fade-in">
-                <h1 className="text-lg font-bold">HEM System</h1>
-                <p className="text-xs text-gray-300">Heavy Equipment</p>
+                <h1 className="text-sm font-bold">HEM System</h1>
               </div>
             )}
           </div>
@@ -221,131 +250,120 @@ export default function Sidebar() {
           {isMobile && (
             <button
               onClick={() => setOpen(false)}
-              className="p-1.5 rounded-md hover:bg-slate-700 transition-colors"
+              className="p-1.5 rounded-md hover:bg-slate-600 transition-colors"
             >
-              <ChevronLeftIcon className="w-5 h-5" />
+              <ChevronLeftIcon className="w-4 h-4" />
             </button>
           )}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {/* Main Navigation */}
-          {visibleNavigation.map((item) => {
-            const isActive = pathname === item.href
-            const Icon = isActive ? item.iconSolid : item.icon
-            
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                onClick={handleNavigationClick}
-                className={`
-                  flex items-center px-3 py-3 rounded-lg text-sm font-medium transition-all duration-200
-                  ${isActive 
-                    ? 'bg-blue-600 text-white shadow-lg' 
-                    : 'text-gray-300 hover:bg-slate-700 hover:text-white'
-                  }
-                  ${!isOpen && 'lg:justify-center lg:px-2'}
-                `}
-                title={!isOpen ? item.name : undefined}
-              >
-                <div className="relative flex items-center">
-                  <Icon className={`w-5 h-5 flex-shrink-0 ${isOpen ? 'mr-3' : ''}`} />
-                  {item.badge && (
-                    <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full"></span>
+          {visibleNavigation.map((item, index) => {
+            if (item.isGroup) {
+              // Category separator
+              return (
+                <div key={item.name} className={`${index > 0 ? 'pt-4' : ''}`}>
+                  {isOpen ? (
+                    <div className="px-3 py-1">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                        {item.name}
+                      </h3>
+                    </div>
+                  ) : (
+                    <div className="h-px bg-slate-600 mx-3 my-2" />
                   )}
                 </div>
-                
-                {isOpen && (
-                  <div className="flex-1 animate-fade-in">
-                    <div className="flex items-center justify-between">
-                      <span>{item.name}</span>
-                      {item.badge && (
-                        <span className="bg-orange-500 text-white text-xs px-2 py-0.5 rounded-full">
-                          {item.badge}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-400 mt-0.5">{item.description}</p>
-                  </div>
-                )}
-              </Link>
-            )
+              )
+            } else if (item.href) {
+              // Regular navigation item
+              const isActive = pathname === item.href
+              const Icon = isActive ? item.iconSolid : item.icon
+              
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  onClick={handleNavigationClick}
+                  className={`
+                    flex items-center px-3 py-2 rounded-md text-sm font-medium transition-all duration-200
+                    ${isActive
+                      ? 'bg-equipment-700 text-white'
+                      : 'text-gray-300 hover:bg-slate-600 hover:text-white'
+                    }
+                    ${!isOpen && 'lg:justify-center'}
+                  `}
+                  title={!isOpen ? item.name : undefined}
+                >
+                  <Icon className={`w-5 h-5 flex-shrink-0 ${isOpen ? 'mr-3' : ''}`} />
+                  {isOpen && <span>{item.name}</span>}
+                </Link>
+              )
+            }
+            return null
           })}
 
           {/* Admin Section */}
           {visibleAdminNavigation.length > 0 && (
-            <>
-              {isOpen && (
-                <div className="pt-4 pb-2">
-                  <div className="flex items-center px-3 py-2">
-                    <div className="h-px flex-1 bg-slate-600"></div>
-                    <span className="px-3 text-xs text-gray-400 font-medium">ADMINISTRATION</span>
-                    <div className="h-px flex-1 bg-slate-600"></div>
-                  </div>
-                </div>
-              )}
-
-              {visibleAdminNavigation.map((item) => {
-                const isActive = pathname === item.href
-                const Icon = isActive ? item.iconSolid : item.icon
-                
-                return (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    onClick={handleNavigationClick}
-                    className={`
-                      flex items-center px-3 py-3 rounded-lg text-sm font-medium transition-all duration-200
-                      ${isActive 
-                        ? 'bg-purple-600 text-white shadow-lg' 
-                        : 'text-gray-300 hover:bg-slate-700 hover:text-white'
-                      }
-                      ${!isOpen && 'lg:justify-center lg:px-2'}
-                    `}
-                    title={!isOpen ? item.name : undefined}
-                  >
-                    <div className="relative flex items-center">
-                      <Icon className={`w-5 h-5 flex-shrink-0 ${isOpen ? 'mr-3' : ''}`} />
-                      {item.badge && (
-                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full"></span>
+            <div className="pt-3">
+              {visibleAdminNavigation.map((item, index) => {
+                if (item.isGroup) {
+                  // Admin category separator
+                  return (
+                    <div key={item.name} className="pt-2">
+                      {isOpen ? (
+                        <div className="px-3 py-1">
+                          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                            {item.name}
+                          </h3>
+                        </div>
+                      ) : (
+                        <div className="h-px bg-slate-600 mx-3 my-2" />
                       )}
                     </div>
-                    
-                    {isOpen && (
-                      <div className="flex-1 animate-fade-in">
-                        <div className="flex items-center justify-between">
-                          <span>{item.name}</span>
-                          {item.badge && (
-                            <span className="bg-orange-500 text-white text-xs px-2 py-0.5 rounded-full">
-                              {item.badge}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-400 mt-0.5">{item.description}</p>
-                      </div>
-                    )}
-                  </Link>
-                )
+                  )
+                } else if (item.href) {
+                  // Admin navigation item
+                  const isActive = pathname === item.href
+                  const Icon = isActive ? item.iconSolid : item.icon
+                  
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      onClick={handleNavigationClick}
+                      className={`
+                        flex items-center px-3 py-2 rounded-md text-sm font-medium transition-all duration-200
+                        ${isActive
+                          ? 'bg-equipment-700 text-white'
+                          : 'text-gray-300 hover:bg-slate-600 hover:text-white'
+                        }
+                        ${!isOpen && 'lg:justify-center'}
+                      `}
+                      title={!isOpen ? item.name : undefined}
+                    >
+                      <Icon className={`w-5 h-5 flex-shrink-0 ${isOpen ? 'mr-3' : ''}`} />
+                      {isOpen && <span>{item.name}</span>}
+                    </Link>
+                  )
+                }
+                return null
               })}
-            </>
+            </div>
           )}
         </nav>
 
         {/* User Role Information */}
         {isOpen && highestRole && (
-          <div className="p-4 border-t border-slate-700">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <ShieldCheckIconSolid className="w-4 h-4 text-white" />
+          <div className="p-3 border-t border-slate-600">
+            <div className="flex items-center space-x-2">
+              <div className="w-6 h-6 bg-gradient-to-r from-equipment-500 to-equipment-700 rounded-md flex items-center justify-center">
+                <ShieldCheckIconSolid className="w-3 h-3 text-white" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">
+                <p className="text-xs font-medium text-white truncate">
                   {highestRole.name}
-                </p>
-                <p className="text-xs text-gray-400 truncate">
-                  Level {highestRole.hierarchy}
                 </p>
               </div>
             </div>

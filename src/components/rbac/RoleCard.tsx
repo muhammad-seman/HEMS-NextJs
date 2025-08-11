@@ -273,7 +273,7 @@ export function RoleCard({
           <div className="text-center">
             <TrashIcon className="w-8 h-8 text-red-600 mx-auto mb-2" />
             <p className="text-sm text-red-800 font-medium mb-3">
-              Delete "{role.name}"?
+              Delete &quot;{role.name}&quot;?
             </p>
             <div className="flex space-x-2">
               <button

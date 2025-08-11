@@ -368,7 +368,7 @@ export const useRBACStore = create<RBACState>((set, get) => ({
 export const initializeRBAC = async () => {
   const store = useRBACStore.getState()
   await Promise.all([
-    store.loadUserPermissions(),
+    store.loadUserPermissions(CURRENT_USER_ID), // Use the proper user ID
     store.loadRoles(),
     store.loadUsers()
   ])

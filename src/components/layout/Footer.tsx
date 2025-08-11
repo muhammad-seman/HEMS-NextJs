@@ -4,10 +4,10 @@ export default function Footer() {
   const currentYear = 2024
 
   return (
-    <footer className="bg-industrial-800 text-gray-300">
+    <footer className="bg-slate-700 text-gray-300">
 
       {/* Bottom Bar */}
-      <div className="border-t border-industrial-700 px-4 sm:px-6 lg:px-8 py-4">
+      <div className="border-t border-slate-600 px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between">
           <div className="flex items-center space-x-4 text-sm text-gray-400">
             <span>© {currentYear} Heavy Equipment Management System</span>

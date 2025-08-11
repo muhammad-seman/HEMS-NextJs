@@ -276,6 +276,7 @@ export function useRoleBasedUI() {
     shouldShowButton,
     getVisibleMenuItems,
     userRoles: permissions.userRoles,
+    userPermissions: permissions.userPermissions,
     highestRole: permissions.highestRole
   }
 }

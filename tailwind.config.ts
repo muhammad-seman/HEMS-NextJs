@@ -25,10 +25,23 @@ const config: Config = {
           800: '#1e293b',
           900: '#0f172a',
         },
+        equipment: {
+          50: '#fef7ee',
+          100: '#fdedd3',
+          200: '#fbd8a5',
+          300: '#f7ba6d',
+          400: '#f29332',
+          500: '#ea7611',
+          600: '#db5e0a',
+          700: '#b5460b',
+          800: '#93390f',
+          900: '#793010',
+        },
       },
       spacing: {
         '18': '4.5rem',
-        '88': '22rem', // Sidebar width
+        '72': '18rem', // Optimized sidebar width based on longest menu text
+        '88': '22rem', // Old sidebar width (keep for reference)
       },
       animation: {
         'slide-in': 'slideIn 0.2s ease-out',

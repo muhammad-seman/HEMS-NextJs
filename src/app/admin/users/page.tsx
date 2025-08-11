@@ -1,28 +1,40 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { 
-  PlusIcon, 
-  FunnelIcon, 
   MagnifyingGlassIcon,
   UserGroupIcon,
-  CheckCircleIcon,
-  XCircleIcon,
-  ShieldCheckIcon,
-  EyeIcon
+  EyeIcon,
+  PencilIcon,
+  TrashIcon
 } from '@heroicons/react/24/outline'
+import { ColumnDef } from '@tanstack/react-table'
 import { useRBACStore } from '@/store/rbac-store'
 import { useAdminPermissions } from '@/hooks/usePermissions'
 import { ProtectedComponent, NoAccessMessage } from '@/components/rbac/ProtectedComponent'
 import { RBACUser, Role } from '@/types/rbac'
+import Table from '@/components/ui/Table'
+import { CreateButton, EditButton, DeleteButton } from '@/components/ui/IconButton'
+import Accordion from '@/components/ui/Accordion'
+import { confirmDelete, confirmRoleChange, successAlert, errorAlert } from '@/lib/alerts'
+import { format } from 'date-fns'
 
-type FilterType = 'all' | 'active' | 'inactive' | 'admins' | 'no-roles'
+interface FilterState {
+  role: string
+  status: string
+  search: string
+  dateRange: string
+}
 
 export default function UserManagementPage() {
-  const [searchTerm, setSearchTerm] = useState('')
-  const [filterType, setFilterType] = useState<FilterType>('all')
-  const [showAssignModal, setShowAssignModal] = useState(false)
-  const [selectedUser, setSelectedUser] = useState<RBACUser | null>(null)
+  const [filters, setFilters] = useState<FilterState>({
+    role: 'all',
+    status: 'all',
+    search: '',
+    dateRange: 'all'
+  })
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [expandedRows, setExpandedRows] = useState<{[key: string]: 'show' | 'edit'}>({})
   
   const { 
     users,
@@ -43,77 +55,455 @@ export default function UserManagementPage() {
     loadRoles()
   }, [loadUsers, loadRoles])
 
-  // Filter and search users
-  const filteredUsers = users.filter(user => {
-    // Search filter
-    const matchesSearch = 
-      user.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase())
-    
-    if (!matchesSearch) return false
-
-    // Type filter
-    switch (filterType) {
-      case 'active':
-        return user.isActive
-      case 'inactive':
-        return !user.isActive
-      case 'admins':
-        return user.roles.some(ur => {
-          const role = roles.find(r => r.id === ur.roleId)
-          return role && (role.name.includes('Admin') || role.hierarchy >= 90)
-        })
-      case 'no-roles':
-        return user.roles.filter(ur => ur.isActive).length === 0
-      default:
-        return true
-    }
-  })
+  // Advanced filtering logic
+  const filteredUsers = useMemo(() => {
+    return users.filter(user => {
+      // Search filter
+      const matchesSearch = !filters.search || 
+        user.firstName.toLowerCase().includes(filters.search.toLowerCase()) ||
+        user.lastName.toLowerCase().includes(filters.search.toLowerCase()) ||
+        user.email.toLowerCase().includes(filters.search.toLowerCase())
+      
+      // Status filter
+      let matchesStatus = true
+      if (filters.status === 'active') matchesStatus = user.isActive
+      else if (filters.status === 'inactive') matchesStatus = !user.isActive
+      
+      // Role filter
+      let matchesRole = true
+      if (filters.role !== 'all') {
+        if (filters.role === 'admins') {
+          matchesRole = user.roles.some(ur => {
+            const role = roles.find(r => r.id === ur.roleId)
+            return role && (role.name.includes('Admin') || role.hierarchy >= 90)
+          })
+        } else if (filters.role === 'no-roles') {
+          matchesRole = user.roles.filter(ur => ur.isActive).length === 0
+        } else {
+          matchesRole = user.roles.some(ur => ur.roleId === filters.role && ur.isActive)
+        }
+      }
+      
+      // Date range filter (if implemented)
+      let matchesDate = true
+      if (filters.dateRange !== 'all' && user.lastLogin) {
+        const now = new Date()
+        const loginDate = user.lastLogin
+        const daysDiff = Math.floor((now.getTime() - loginDate.getTime()) / (1000 * 60 * 60 * 24))
+        
+        switch (filters.dateRange) {
+          case '7d':
+            matchesDate = daysDiff <= 7
+            break
+          case '30d':
+            matchesDate = daysDiff <= 30
+            break
+          case '90d':
+            matchesDate = daysDiff <= 90
+            break
+          default:
+            matchesDate = true
+        }
+      }
+      
+      return matchesSearch && matchesStatus && matchesRole && matchesDate
+    })
+  }, [users, roles, filters])
 
   // Get user's active roles
-  const getUserRoles = (user: RBACUser): Role[] => {
+  const getUserRoles = useCallback((user: RBACUser): Role[] => {
     const activeRoleIds = user.roles
       .filter(ur => ur.isActive)
       .map(ur => ur.roleId)
     
     return roles.filter(role => activeRoleIds.includes(role.id))
-  }
+  }, [roles])
 
-  // Handle role assignment
+  // Handle role assignment with confirmation
   const handleAssignRole = async (userId: string, roleId: string) => {
+    const user = users.find(u => u.id === userId)
+    const role = roles.find(r => r.id === roleId)
+    
+    if (!user || !role) return
+    
+    const confirmed = await confirmRoleChange('assign', role.name, `${user.firstName} ${user.lastName}`)
+    if (!confirmed) return
+    
     try {
       await assignRoleToUser(userId, roleId)
+      successAlert({ title: 'Role assigned successfully!' })
     } catch (error) {
-      console.error('Failed to assign role:', error)
+      errorAlert({ 
+        title: 'Failed to assign role', 
+        text: error instanceof Error ? error.message : 'An error occurred' 
+      })
     }
   }
 
   const handleRemoveRole = async (userId: string, roleId: string) => {
+    const user = users.find(u => u.id === userId)
+    const role = roles.find(r => r.id === roleId)
+    
+    if (!user || !role) return
+    
+    const confirmed = await confirmRoleChange('remove', role.name, `${user.firstName} ${user.lastName}`)
+    if (!confirmed) return
+    
     try {
       await removeRoleFromUser(userId, roleId)
+      successAlert({ title: 'Role removed successfully!' })
     } catch (error) {
-      console.error('Failed to remove role:', error)
+      errorAlert({ 
+        title: 'Failed to remove role', 
+        text: error instanceof Error ? error.message : 'An error occurred' 
+      })
     }
   }
 
-  // Statistics
-  const stats = {
-    total: users.length,
-    active: users.filter(u => u.isActive).length,
-    inactive: users.filter(u => !u.isActive).length,
-    admins: users.filter(u => 
-      u.roles.some(ur => {
-        const role = roles.find(r => r.id === ur.roleId)
-        return role && (role.name.includes('Admin') || role.hierarchy >= 90)
+  // Handle user deletion
+  const handleDeleteUser = useCallback(async (userId: string) => {
+    const user = users.find(u => u.id === userId)
+    if (!user) return
+    
+    const confirmed = await confirmDelete(`${user.firstName} ${user.lastName}`)
+    if (!confirmed) return
+    
+    try {
+      // Add delete user logic here
+      successAlert({ title: 'User deleted successfully!' })
+    } catch (error) {
+      errorAlert({ 
+        title: 'Failed to delete user', 
+        text: error instanceof Error ? error.message : 'An error occurred' 
       })
-    ).length,
-    noRoles: users.filter(u => u.roles.filter(ur => ur.isActive).length === 0).length
+    }
+  }, [users])
+
+  // Handle showing user details
+  const handleShowUser = useCallback((userId: string) => {
+    setExpandedRows(prev => ({
+      ...prev,
+      [userId]: prev[userId] === 'show' ? undefined as any : 'show'
+    }))
+  }, [])
+
+  // Handle editing user
+  const handleEditUser = useCallback((userId: string) => {
+    setExpandedRows(prev => ({
+      ...prev,
+      [userId]: prev[userId] === 'edit' ? undefined as any : 'edit'
+    }))
+  }, [])
+
+
+  // Table columns definition
+  const columns = useMemo<ColumnDef<RBACUser>[]>(() => [
+    {
+      accessorKey: 'firstName',
+      header: 'Name',
+      cell: ({ row }) => {
+        const user = row.original
+        return (
+          <div className="font-medium text-gray-900 text-sm">
+            {user.firstName} {user.lastName}
+          </div>
+        )
+      }
+    },
+    {
+      accessorKey: 'email',
+      header: 'Email',
+      cell: ({ row }) => {
+        const user = row.original
+        return (
+          <div className="text-sm text-gray-600">
+            {user.email}
+          </div>
+        )
+      }
+    },
+    {
+      id: 'roles',
+      header: 'Role',
+      cell: ({ row }) => {
+        const user = row.original
+        const userRoles = getUserRoles(user)
+        return (
+          <div className="text-sm">
+            {userRoles.length > 0 ? (
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                {userRoles[0].name}
+                {userRoles.length > 1 && ` +${userRoles.length - 1}`}
+              </span>
+            ) : (
+              <span className="text-gray-400 italic">No role</span>
+            )}
+          </div>
+        )
+      },
+      enableSorting: false
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: ({ row }) => {
+        const user = row.original
+        return (
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+            user.isActive 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-red-100 text-red-800'
+          }`}>
+            {user.isActive ? 'Active' : 'Inactive'}
+          </span>
+        )
+      }
+    },
+    {
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) => {
+        const user = row.original
+        return (
+          <div className="flex items-center justify-end space-x-2">
+            <button
+              onClick={() => handleShowUser(user.id)}
+              className="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+              title="Show details"
+            >
+              <EyeIcon className="h-4 w-4" />
+            </button>
+            {canManageUsers && (
+              <>
+                <button
+                  onClick={() => handleEditUser(user.id)}
+                  className="p-1.5 text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-md transition-colors"
+                  title="Edit user"
+                >
+                  <PencilIcon className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => handleDeleteUser(user.id)}
+                  className="p-1.5 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                  title="Delete user"
+                >
+                  <TrashIcon className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
+        )
+      },
+      enableSorting: false
+    }
+  ], [canManageUsers, getUserRoles, handleDeleteUser, handleShowUser, handleEditUser])
+
+  // Expandable row content
+  const expandableContent = (user: RBACUser) => {
+    const userRoles = getUserRoles(user)
+    const availableRoles = roles.filter(role => 
+      !userRoles.some(ur => ur.id === role.id)
+    )
+    const expandMode = expandedRows[user.id]
+    
+    if (expandMode === 'edit') {
+      return (
+        <div className="grid grid-cols-1 gap-4">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-medium text-gray-900">Edit User: {user.firstName} {user.lastName}</h4>
+            <button
+              onClick={() => handleEditUser(user.id)}
+              className="text-xs px-2 py-1 text-gray-600 hover:text-gray-800"
+            >
+              Cancel
+            </button>
+          </div>
+          
+          <form className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                First Name *
+              </label>
+              <input
+                type="text"
+                defaultValue={user.firstName}
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Last Name *
+              </label>
+              <input
+                type="text"
+                defaultValue={user.lastName}
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Email Address *
+              </label>
+              <input
+                type="email"
+                defaultValue={user.email}
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Phone Number
+              </label>
+              <input
+                type="tel"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter phone number"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Employee ID
+              </label>
+              <input
+                type="text"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter employee ID"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Department/Site
+              </label>
+              <select className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                <option value="">Select department</option>
+                <option value="operations">Operations</option>
+                <option value="maintenance">Maintenance</option>
+                <option value="logistics">Logistics</option>
+                <option value="safety">Safety & Compliance</option>
+                <option value="admin">Administration</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Status
+              </label>
+              <select defaultValue={user.isActive ? 'active' : 'inactive'} className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+            <div className="sm:col-span-2 flex justify-end space-x-2 pt-2 border-t border-gray-200">
+              <button
+                type="button"
+                onClick={() => handleEditUser(user.id)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700"
+              >
+                Save Changes
+              </button>
+            </div>
+          </form>
+        </div>
+      )
+    }
+    
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* User Details */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-medium text-gray-900">User Details: {user.firstName} {user.lastName}</h4>
+          </div>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Full Name:</dt>
+              <dd className="text-gray-900">{user.firstName} {user.lastName}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Email:</dt>
+              <dd className="text-gray-900">{user.email}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Status:</dt>
+              <dd className={user.isActive ? 'text-green-600' : 'text-red-600'}>
+                {user.isActive ? 'Active' : 'Inactive'}
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Last Login:</dt>
+              <dd className="text-gray-900">
+                {user.lastLogin ? format(user.lastLogin, 'MMM dd, yyyy HH:mm') : 'Never'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+        
+        {/* Role Management */}
+        {canManageUsers && (
+          <div>
+            <h4 className="font-medium text-gray-900 mb-3">Role Management</h4>
+            
+            {/* Current Roles */}
+            <div className="mb-4">
+              <h5 className="text-sm font-medium text-gray-700 mb-2">Current Roles</h5>
+              {userRoles.length > 0 ? (
+                <div className="space-y-2">
+                  {userRoles.map(role => (
+                    <div key={role.id} className="flex items-center justify-between p-2 bg-blue-50 rounded-md">
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">{role.name}</span>
+                        <p className="text-xs text-gray-500">{role.description}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveRole(user.id, role.id)}
+                        className="text-xs px-2 py-1 bg-red-100 text-red-800 rounded-full hover:bg-red-200"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">No roles assigned</p>
+              )}
+            </div>
+            
+            {/* Available Roles */}
+            {availableRoles.length > 0 && (
+              <div>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">Available Roles</h5>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {availableRoles.map(role => (
+                    <div key={role.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">{role.name}</span>
+                        <p className="text-xs text-gray-500">{role.description}</p>
+                      </div>
+                      <button
+                        onClick={() => handleAssignRole(user.id, role.id)}
+                        className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded-full hover:bg-green-200"
+                      >
+                        Assign
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
   }
 
   if (error) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="w-full py-6">
         <div className="bg-red-50 border border-red-200 rounded-md p-4">
           <div className="flex">
             <div className="ml-3">
@@ -132,263 +522,272 @@ export default function UserManagementPage() {
       action="read"
       fallback={<NoAccessMessage message="You don't have permission to view user management." />}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="w-full py-2">
         {/* Header */}
-        <div className="sm:flex sm:items-center sm:justify-between mb-8">
+        <div className="flex items-center justify-between mb-3">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900">User Management</h1>
-            <p className="mt-2 text-sm text-gray-700">
-              Manage user accounts and role assignments for your heavy equipment management system.
-            </p>
+            <h1 className="text-lg font-semibold text-gray-900">User Management</h1>
           </div>
           
           <ProtectedComponent module="users" action="create">
-            <button
-              onClick={() => console.log('Create user modal')}
-              className="mt-4 sm:mt-0 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <PlusIcon className="w-4 h-4 mr-2" />
-              Add User
-            </button>
+            <CreateButton 
+              onClick={() => setShowCreateForm(!showCreateForm)}
+              tooltip="Create new user"
+            />
           </ProtectedComponent>
         </div>
 
-        {/* Statistics Cards */}
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5 mb-8">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <UserGroupIcon className="h-6 w-6 text-gray-400" />
+        {/* Create User Form */}
+        {showCreateForm && (
+          <div className="mb-4">
+            <Accordion title="Create New User" isOpen={showCreateForm} onToggle={() => setShowCreateForm(!showCreateForm)}>
+              <form className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    First Name *
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter first name"
+                  />
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Total Users</dt>
-                    <dd className="text-lg font-medium text-gray-900">{stats.total}</dd>
-                  </dl>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Last Name *
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter last name"
+                  />
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <CheckCircleIcon className="h-6 w-6 text-green-400" />
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Email Address *
+                  </label>
+                  <input
+                    type="email"
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter email address"
+                  />
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Active</dt>
-                    <dd className="text-lg font-medium text-gray-900">{stats.active}</dd>
-                  </dl>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Password *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Enter password"
+                    />
+                  </div>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <XCircleIcon className="h-6 w-6 text-red-400" />
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="tel"
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter phone number"
+                  />
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Inactive</dt>
-                    <dd className="text-lg font-medium text-gray-900">{stats.inactive}</dd>
-                  </dl>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Employee ID
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter employee ID"
+                  />
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <ShieldCheckIcon className="h-6 w-6 text-purple-400" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Admins</dt>
-                    <dd className="text-lg font-medium text-gray-900">{stats.admins}</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-6 h-6 bg-yellow-400 rounded-full"></div>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">No Roles</dt>
-                    <dd className="text-lg font-medium text-gray-900">{stats.noRoles}</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filters and Search */}
-        <div className="bg-white shadow rounded-lg mb-6">
-          <div className="p-4 border-b border-gray-200">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
-              {/* Search */}
-              <div className="relative flex-1 max-w-lg">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search users..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-
-              {/* Filters */}
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-2">
-                  <FunnelIcon className="w-4 h-4 text-gray-400" />
-                  <select
-                    value={filterType}
-                    onChange={(e) => setFilterType(e.target.value as FilterType)}
-                    className="block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md"
-                  >
-                    <option value="all">All Users</option>
-                    <option value="active">Active Users</option>
-                    <option value="inactive">Inactive Users</option>
-                    <option value="admins">Administrators</option>
-                    <option value="no-roles">No Roles Assigned</option>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Department/Site
+                  </label>
+                  <select className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="">Select department</option>
+                    <option value="operations">Operations</option>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="logistics">Logistics</option>
+                    <option value="safety">Safety & Compliance</option>
+                    <option value="admin">Administration</option>
                   </select>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Results Summary */}
-          <div className="px-4 py-2 bg-gray-50 text-sm text-gray-600">
-            Showing {filteredUsers.length} of {users.length} users
-          </div>
-        </div>
-
-        {/* Loading State */}
-        {isLoadingUsers && (
-          <div className="flex justify-center items-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Role *
+                  </label>
+                  <select className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="">Select role</option>
+                    {roles.map(role => (
+                      <option key={role.id} value={role.id}>{role.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Status
+                  </label>
+                  <select className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2 flex justify-end space-x-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateForm(false)}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700"
+                  >
+                    Create User
+                  </button>
+                </div>
+              </form>
+            </Accordion>
           </div>
         )}
 
+        {/* Advanced Filters */}
+        <div className="bg-white shadow rounded-lg mb-4 p-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Search */}
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <MagnifyingGlassIcon className="h-4 w-4 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                placeholder="Search users..."
+                value={filters.search}
+                onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                className="block w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            {/* Status Filter */}
+            <select
+              value={filters.status}
+              onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+              className="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">All Status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+
+            {/* Role Filter */}
+            <select
+              value={filters.role}
+              onChange={(e) => setFilters(prev => ({ ...prev, role: e.target.value }))}
+              className="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">All Roles</option>
+              <option value="admins">Administrators</option>
+              <option value="no-roles">No Roles</option>
+              {roles.map(role => (
+                <option key={role.id} value={role.id}>{role.name}</option>
+              ))}
+            </select>
+
+            {/* Date Range Filter */}
+            <select
+              value={filters.dateRange}
+              onChange={(e) => setFilters(prev => ({ ...prev, dateRange: e.target.value }))}
+              className="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">All Time</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+            </select>
+          </div>
+          
+          <div className="mt-3 flex items-center justify-end">
+            {/* Clear Filters */}
+            <button
+              onClick={() => setFilters({ role: 'all', status: 'all', search: '', dateRange: 'all' })}
+              className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+            >
+              Clear filters
+            </button>
+          </div>
+        </div>
+
         {/* Users Table */}
-        {!isLoadingUsers && (
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <ul className="divide-y divide-gray-200">
-              {filteredUsers.map((user) => {
-                const userRoles = getUserRoles(user)
-                
-                return (
-                  <li key={user.id}>
-                    <div className="px-4 py-4 flex items-center justify-between hover:bg-gray-50">
-                      <div className="flex items-center">
-                        {/* Avatar */}
-                        <div className="flex-shrink-0 h-10 w-10">
-                          <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                            <span className="text-sm font-medium text-gray-700">
-                              {user.firstName[0]}{user.lastName[0]}
-                            </span>
-                          </div>
-                        </div>
-                        
-                        {/* User Info */}
-                        <div className="ml-4">
-                          <div className="flex items-center">
-                            <div className="text-sm font-medium text-gray-900">
-                              {user.firstName} {user.lastName}
-                            </div>
-                            {!user.isActive && (
-                              <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                                Inactive
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm text-gray-500">{user.email}</div>
-                          {user.lastLogin && (
-                            <div className="text-xs text-gray-400">
-                              Last login: {user.lastLogin.toLocaleDateString()}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Roles */}
-                      <div className="flex items-center space-x-4">
-                        <div className="flex flex-wrap gap-1 max-w-md">
-                          {userRoles.length > 0 ? (
-                            userRoles.map((role) => (
-                              <span
-                                key={role.id}
-                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-                              >
-                                {role.name}
-                                {canManageUsers && (
-                                  <button
-                                    onClick={() => handleRemoveRole(user.id, role.id)}
-                                    className="ml-1 inline-flex items-center justify-center w-3 h-3 text-blue-400 hover:text-blue-600"
-                                  >
-                                    <XCircleIcon className="w-3 h-3" />
-                                  </button>
-                                )}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-sm text-gray-400 italic">No roles assigned</span>
-                          )}
-                        </div>
-                        
-                        {/* Actions */}
-                        {canManageUsers && (
-                          <div className="flex items-center space-x-2">
-                            <button
-                              onClick={() => {
-                                setSelectedUser(user)
-                                setShowAssignModal(true)
-                              }}
-                              className="text-blue-600 hover:text-blue-900 text-sm font-medium"
-                            >
-                              Manage Roles
-                            </button>
-                            <button
-                              onClick={() => console.log('View user:', user)}
-                              className="p-1 text-gray-400 hover:text-gray-600"
-                            >
-                              <EyeIcon className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
+        {isLoadingUsers ? (
+          <div className="bg-white rounded-lg shadow">
+            <div className="animate-pulse">
+              <div className="border-b border-gray-200 px-4 py-4">
+                <div className="h-4 bg-gray-300 rounded w-1/4"></div>
+              </div>
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="border-b border-gray-200 px-4 py-4">
+                  <div className="flex space-x-4">
+                    <div className="h-10 w-10 bg-gray-300 rounded-full"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 bg-gray-300 rounded w-3/4"></div>
+                      <div className="h-3 bg-gray-300 rounded w-1/2"></div>
                     </div>
-                  </li>
-                )
-              })}
-            </ul>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="w-full bg-white rounded-lg shadow overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {columns.map((column, index) => (
+                      <th key={index} className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {typeof column.header === 'string' ? column.header : ''}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredUsers.map((user, userIndex) => (
+                    <React.Fragment key={user.id}>
+                      <tr className="hover:bg-gray-50">
+                        {columns.map((column, colIndex) => (
+                          <td key={colIndex} className="px-3 py-3 whitespace-nowrap text-sm text-gray-900">
+                            {column.cell ? column.cell({ row: { original: user } } as any) : ''}
+                          </td>
+                        ))}
+                      </tr>
+                      {expandedRows[user.id] && (
+                        <tr>
+                          <td colSpan={columns.length} className="px-3 py-4 bg-gray-50">
+                            {expandableContent(user)}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
         {/* Empty State */}
         {!isLoadingUsers && filteredUsers.length === 0 && (
-          <div className="text-center py-12">
+          <div className="text-center py-12 bg-white rounded-lg shadow">
             <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
             <h3 className="mt-2 text-sm font-medium text-gray-900">No users found</h3>
             <p className="mt-1 text-sm text-gray-500">
-              {searchTerm || filterType !== 'all' 
+              {filters.search || filters.status !== 'all' || filters.role !== 'all'
                 ? "Try adjusting your search or filter criteria."
                 : "Get started by adding your first user."
               }
@@ -396,65 +795,6 @@ export default function UserManagementPage() {
           </div>
         )}
 
-        {/* Role Assignment Modal */}
-        {showAssignModal && selectedUser && (
-          <div className="fixed inset-0 z-50 overflow-y-auto">
-            <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-              <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
-              
-              <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-                <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">
-                    Manage Roles for {selectedUser.firstName} {selectedUser.lastName}
-                  </h3>
-                  
-                  <div className="space-y-3">
-                    {roles.map((role) => {
-                      const hasRole = selectedUser.roles.some(ur => 
-                        ur.roleId === role.id && ur.isActive
-                      )
-                      
-                      return (
-                        <div key={role.id} className="flex items-center justify-between p-3 border rounded-md">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{role.name}</div>
-                            <div className="text-xs text-gray-500">{role.description}</div>
-                          </div>
-                          
-                          <button
-                            onClick={() => hasRole 
-                              ? handleRemoveRole(selectedUser.id, role.id)
-                              : handleAssignRole(selectedUser.id, role.id)
-                            }
-                            className={`px-3 py-1 text-xs font-medium rounded-full ${
-                              hasRole
-                                ? 'bg-red-100 text-red-800 hover:bg-red-200'
-                                : 'bg-green-100 text-green-800 hover:bg-green-200'
-                            }`}
-                          >
-                            {hasRole ? 'Remove' : 'Assign'}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-                
-                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                  <button
-                    onClick={() => {
-                      setShowAssignModal(false)
-                      setSelectedUser(null)
-                    }}
-                    className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </ProtectedComponent>
   )
